@@ -35,13 +35,14 @@ let update x v s = fun y -> if x = y then v else s y
 (* An example of a non-trivial state: *)                                                   
 let s = update "x" 1 @@ update "y" 2 @@ update "z" 3 @@ update "t" 4 empty
 
-(* Some testing; comment this definition out when submitting the solution. *)
+(* Some testing; comment this definition out when submitting the solution.
 let _ =
   List.iter
     (fun x ->
        try  Printf.printf "%s=%d\n" x @@ s x
        with Failure s -> Printf.printf "%s\n" s
     ) ["x"; "a"; "y"; "z"; "t"; "b"]
+*)
 
 (* Expression evaluator
 
@@ -50,5 +51,28 @@ let _ =
    Takes a state and an expression, and returns the value of the expression in 
    the given state.
 *)
-let eval = failwith "Not implemented yet"
-                    
+
+let bool_of_int intValue = intValue != 0;;
+
+let int_of_bool boolValue = if boolValue then 1 else 0;;
+
+let apply_operation op left right = match op with
+  | "+" -> (+) left right
+  | "-" -> (-) left right
+  | "*" -> ( * ) left right
+  | "/" -> (/) left right
+  | "%" -> (mod) left right
+  | "!!" -> int_of_bool ((||) (bool_of_int left) (bool_of_int right))
+  | "&&" -> int_of_bool ((&&) (bool_of_int left) (bool_of_int right))
+  | "==" -> int_of_bool ((==) left right)
+  | "!=" -> int_of_bool ((!=) left right)
+  | "<=" -> int_of_bool ((<=) left right)
+  | "<" -> int_of_bool ((>) left right)
+  | ">=" -> int_of_bool ((>=) left right)
+  | ">" -> int_of_bool ((>) left right)
+  | _ -> failwith "Unknown operation";; 
+
+let rec eval state expr = match expr with
+  | Const value -> value
+  | Var name -> state name 
+  | Binop (op, left, right) -> apply_operation op (eval state left) (eval state right);;
