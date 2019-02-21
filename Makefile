@@ -13,4 +13,3 @@ regression:
 clean:
 	pushd src && make clean && popd
 	pushd regression && make clean && popd
-

@@ -18,5 +18,5 @@ How to submit your HW:
 * fork repo
 * checkout branch hw<№>
 * open a pull request from hw[№] branch of your repository into corresponding hw[№] branch of this repo
-* NB: in pull request title you have to specify your name, surname (both full and in russian), university, and group
+* NB: pull request title has to start with [hw№] then you have to specify your name, surname (both full and in russian), university, and group
 * we will take a look on your pull request if and only if travis has successfully build and test your submission (a green mark has to appear next to your pull-request title)

@@ -1,7 +1,7 @@
 OCAMLC = ocamlfind c
 OCAMLOPT = ocamlfind opt
 OCAMLDEP = ocamlfind dep
-SOURCES = common.ml test000.ml
+SOURCES = common.ml $(TOPFILE).ml
 CAMLP5 = -syntax camlp5o -package ostap.syntax,GT.syntax.all
 PXFLAGS = $(CAMLP5)
 BFLAGS = -rectypes -I ../src
@@ -13,10 +13,10 @@ all: .depend $(TOPFILE).opt
 	$(OCAMLDEP) $(PXFLAGS) *.ml > .depend
 
 $(TOPFILE).opt: $(SOURCES:.ml=.cmx)
-	$(OCAMLOPT) -o $(TOPFILE).opt $(OFLAGS) $(LIBS:.cma=.cmxa) -linkpkg -package ostap Expr.cmx Embedding.cmx $(SOURCES:.ml=.cmx)
+	$(OCAMLOPT) -o $(TOPFILE).opt $(OFLAGS) $(LIBS:.cma=.cmxa) -linkpkg -package ostap Syntax.cmx SM.cmx Embedding.cmx $(SOURCES:.ml=.cmx)
 
 $(TOPFILE).byte: $(SOURCES:.ml=.cmo)
-	$(OCAMLC) -o $(TOPFILE).byte $(BFLAGS) $(LIBS) -linkpkg -package ostap Expr.cmo Embedding.cmo $(SOURCES:.ml=.cmo) 
+	$(OCAMLC) -o $(TOPFILE).byte $(BFLAGS) $(LIBS) -linkpkg -package ostap Syntax.cmo SM.cmo Embedding.cmo $(SOURCES:.ml=.cmo) 
 
 clean:
 	rm -Rf *.cmi *.cmo *.cmx *.annot *.o *.opt *.byte *~ .depend *.log
@@ -40,3 +40,4 @@ clean:
 
 %.cmx: %.ml
 	$(OCAMLOPT) -c $(OFLAGS) $(STATIC) $(PXFLAGS) $<
+
