@@ -67,7 +67,7 @@ let apply_operation op left right = match op with
   | "==" -> int_of_bool ((==) left right)
   | "!=" -> int_of_bool ((!=) left right)
   | "<=" -> int_of_bool ((<=) left right)
-  | "<" -> int_of_bool ((>) left right)
+  | "<" -> int_of_bool ((<) left right)
   | ">=" -> int_of_bool ((>=) left right)
   | ">" -> int_of_bool ((>) left right)
   | _ -> failwith "Unknown operation";; 
