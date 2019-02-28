@@ -19,7 +19,7 @@ module Expr =
         !!                   --- disjunction
         &&                   --- conjunction
         ==, !=, <=, <, >=, > --- comparisons
-        +, -                 --- addition, subtraction
+        +, -                 --- additioån, subtraction
         *, /, %              --- multiplication, division, reminder
     *)
                                                             
@@ -34,6 +34,26 @@ module Expr =
     *)
     let update x v s = fun y -> if x = y then v else s y
 
+    let bool_of_int intValue = intValue != 0
+
+    let int_of_bool boolValue = if boolValue then 1 else 0
+
+    let apply_operation op left right = match op with
+      | "+" -> (+) left right
+      | "-" -> (-) left right
+      | "*" -> ( * ) left right
+      | "/" -> (/) left right
+      | "%" -> (mod) left right
+      | "!!" -> int_of_bool ((||) (bool_of_int left) (bool_of_int right))
+      | "&&" -> int_of_bool ((&&) (bool_of_int left) (bool_of_int right))
+      | "==" -> int_of_bool ((==) left right)
+      | "!=" -> int_of_bool ((!=) left right)
+      | "<=" -> int_of_bool ((<=) left right)
+      | "<" -> int_of_bool ((<) left right)
+      | ">=" -> int_of_bool ((>=) left right)
+      | ">" -> int_of_bool ((>) left right)
+      | _ -> failwith "Unknown operation"
+
     (* Expression evaluator
 
           val eval : state -> t -> int
@@ -41,7 +61,10 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval state expr = match expr with
+      | Const value -> value
+      | Var name -> state name 
+      | Binop (op, left, right) -> apply_operation op (eval state left) (eval state right)
 
   end
                     
@@ -65,7 +88,12 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval config statement = match (config, statement) with
+      | ((state, value::inp, out), Read name) -> (Expr.update name value state, inp, out)
+      | ((state, inp, out), Write expr) -> (state, inp, out @ [(Expr.eval state expr)])
+      | ((state, inp, out), Assign (name, expr)) -> ((Expr.update name (Expr.eval state expr) state), inp, out)
+      | (config, Seq (s1, s2)) -> eval (eval config s1) s2
+      | _ -> failwith "Unknown operation"
                                                          
   end
 
@@ -82,3 +110,4 @@ type t = Stmt.t
 *)
 let eval i p =
   let _, _, o = Stmt.eval (Expr.empty, i, []) p in o
+    
