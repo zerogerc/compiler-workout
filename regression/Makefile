@@ -11,4 +11,7 @@ $(TESTS): %: %.expr
 	cat $@.input | $(RC) -s $< > $@.log && diff $@.log orig/$@.log
 
 clean:
+	find . -maxdepth 1 -name "*.log" -delete
 	rm -f test*.log *.s *~ $(TESTS)
+	pushd expressions && make clean
+	pushd deep-expressions && make clean
