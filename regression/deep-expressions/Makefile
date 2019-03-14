@@ -13,4 +13,5 @@ $(TESTS): %: %.expr
 
 clean:
 	find . -maxdepth 1 -name "*.log" -delete
-	rm -f *.s *~ $(TESTS)
+	find . -maxdepth 1 -type f -not -name '*.*' -not -name 'Makefile' -delete
+	rm -f *.s *~

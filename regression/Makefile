@@ -12,4 +12,6 @@ $(TESTS): %: %.expr
 	@cat $@.input | $(RC) -s $< > $@.log && diff $@.log orig/$@.log
 
 clean:
-	rm -f test*.log *.s *~ $(TESTS)
+	rm -f *.s *~ *.log $(TESTS)
+	pushd expressions && make clean && popd
+	pushd deep-expressions && make clean && popd
