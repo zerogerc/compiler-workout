@@ -73,15 +73,6 @@ let show instr =
 (* Opening stack machine to use instructions without fully qualified names *)
 open SM
 
-(* Symbolic stack machine evaluator
-
-     compile : env -> prg -> env * instr list
-
-   Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
-   of x86 instructions
-*)
-let compile _ _ = failwith "Not yet implemented"
-
 (* A set of strings *)           
 module S = Set.Make (String)
 
@@ -126,6 +117,124 @@ class env =
     (* gets all global variables *)      
     method globals = S.elements globals
   end
+
+let rec compile_binop env l r op res_operand =
+  let set_zero operand = Binop("^", operand, operand) in
+  let op_suffix op = (
+    match op with
+      | "<=" -> "le"
+      | "<" -> "l"
+      | ">=" -> "ge"
+      | ">" -> "g"
+      | "==" -> "e"
+      | "!=" -> "ne"
+      | _ -> failwith ("Unknown operator!")
+  ) in
+  let compile_simple_arithm = (
+    match (l, r) with
+      | (S _, S _) -> [
+          Mov (l, eax);
+          Binop (op, r, eax);
+          Mov (eax, res_operand)
+      ]
+      | _ -> if res_operand = l
+        then [
+          Binop (op, r, l)
+        ]
+        else [
+          Binop (op, r, l);
+          Mov (l, res_operand)
+        ]
+  ) in
+  let compile_div_mod = (
+    let result = if op = "/" then eax else edx in
+      [
+        Mov (l, eax);
+        set_zero edx;
+        Cltd;
+        IDiv r;
+        Mov (result, res_operand)
+      ]
+  ) in
+  let compile_cmp = (
+    match (l, r) with
+      | (S _, S _) -> [
+        set_zero eax;
+        Mov (l, edx);
+        Binop ("cmp", r, edx);
+        Set(op_suffix op, "%al");
+        Mov(eax, res_operand)
+      ]
+      | _ -> [
+        set_zero eax;
+        Binop ("cmp", r, l);
+        Set (op_suffix op, "%al");
+        Mov (eax, res_operand)
+      ]
+  ) in
+  let compile_or = [
+    set_zero eax;
+    Mov (l, edx);
+    Binop ("!!", r, edx);
+    Set ("nz", "%al");
+    Mov (eax, res_operand)
+  ] in
+  let compile_and = [
+    set_zero eax;
+    set_zero edx;
+    Binop ("cmp", L 0, l);
+    Set ("ne", "%al");
+    Binop ("cmp", L 0, r);
+    Set ("ne", "%dl");
+    Binop ("&&", edx, eax);
+    Mov (eax, res_operand)
+  ] in
+  let instr_list = match op with
+    | "+" | "-" | "*" -> compile_simple_arithm
+    | "/" | "%" -> compile_div_mod
+    | "<=" | "<" | ">=" | ">" | "==" | "!=" -> compile_cmp
+    | "!!" -> compile_or
+    | "&&" -> compile_and
+    | _ -> failwith ("Unknown operand!") in
+  env, instr_list
+
+
+let compile_single env ins =
+  let instr_list = match ins with
+  | BINOP op -> 
+    let r, l, env = env#pop2 in
+    let res_operand, env = env#allocate in
+    snd (compile_binop env l r op res_operand)
+  | CONST x ->
+    let operand, _ = env#allocate in
+    [Mov (L x, operand)]
+  | READ ->
+    let operand, _ = env#allocate in
+    [Call "Lread"; Mov (eax, operand)]
+  | WRITE ->
+    let operand, _ = env#pop in 
+    [Push operand; Call "Lwrite"; Pop eax]
+  | LD name ->
+    let operand, _ = env#allocate in
+    let loc_name = env#loc name in
+    [Mov ((M loc_name), operand)]
+  | ST name ->
+    let value, _ = (env#global name)#pop in
+    let actual_name = env#loc name in
+    [Mov (value, (M actual_name))]
+  in env, instr_list
+
+(* Symbolic stack machine evaluator
+     compile : env -> prg -> env * instr list
+   Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
+   of x86 instructions
+*)
+let rec compile env prg = match prg with
+  | [] -> env, []
+  | ins::rest -> 
+    let env_updated_single, single_instr_list = (compile_single env ins) in
+    let env_updated_rest, rest_instr_list = compile env_updated_single rest in
+    env_updated_rest, (single_instr_list @ rest_instr_list)
 
 (* compiles a unit: generates x86 machine code for the stack program and surrounds it
    with function prologue/epilogue

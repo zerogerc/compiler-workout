@@ -37,26 +37,64 @@ module Expr =
     *)
     let update x v s = fun y -> if x = y then v else s y
 
-    (* Expression evaluator
+    let bool_of_int intValue = intValue != 0
 
+    let int_of_bool boolValue = if boolValue then 1 else 0
+
+    let apply_operation op left right = match op with
+      | "+" -> (+) left right
+      | "-" -> (-) left right
+      | "*" -> ( * ) left right
+      | "/" -> (/) left right
+      | "%" -> (mod) left right
+      | "!!" -> int_of_bool ((||) (bool_of_int left) (bool_of_int right))
+      | "&&" -> int_of_bool ((&&) (bool_of_int left) (bool_of_int right))
+      | "==" -> int_of_bool ((==) left right)
+      | "!=" -> int_of_bool ((!=) left right)
+      | "<=" -> int_of_bool ((<=) left right)
+      | "<" -> int_of_bool ((<) left right)
+      | ">=" -> int_of_bool ((>=) left right)
+      | ">" -> int_of_bool ((>) left right)
+      | _ -> failwith "Unknown operation"
+
+    (* Expression evaluator
           val eval : state -> t -> int
  
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
-     *)                                                       
-    let eval _ _ = failwith "Not yet implemented"
+    *)
+    let rec eval state expr = match expr with
+      | Const value -> value
+      | Var name -> state name 
+      | Binop (op, left, right) -> apply_operation op (eval state left) (eval state right)
+
+    let createBinopParsePair op = ostap(- $(op)), fun left right -> Binop (op, left, right)
 
     (* Expression parser. You can use the following terminals:
-
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string
-                                                                                                                  
+   
     *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+    ostap (
+      expr: 
+        !(Ostap.Util.expr
+          (fun parsed -> parsed)
+          (Array.map (fun (assoc, operations) -> assoc, List.map createBinopParsePair operations)
+            [|
+              `Lefta, ["!!"];
+              `Lefta, ["&&"];
+              `Nona,  ["<="; "<"; ">="; ">"; "=="; "!="];
+              `Lefta, ["+"; "-"];
+              `Lefta, ["*"; "/"; "%"];
+            |]
+          )
+          primary
+        );
+
+      primary: name:IDENT {Var name} | value:DECIMAL {Const value} | -"(" expr -")"
     )
-    
-  end
+
+end
                     
 (* Simple statements: syntax and sematics *)
 module Stmt =
@@ -78,12 +116,21 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ _ = failwith "Not yet implemented"
+    let rec eval config statement = match (config, statement) with
+    | ((state, value::inp, out), Read name) -> (Expr.update name value state, inp, out)
+    | ((state, inp, out), Write expr) -> (state, inp, out @ [(Expr.eval state expr)])
+    | ((state, inp, out), Assign (name, expr)) -> ((Expr.update name (Expr.eval state expr) state), inp, out)
+    | (config, Seq (s1, s2)) -> eval (eval config s1) s2
+    | _ -> failwith "Unknown operation"
 
-    (* Statement parser *)
-    ostap (
-      parse: empty {failwith "Not yet implemented"}
-    )
+  (* Statement parser *)
+  ostap (
+    parse: st:statement ";" rest:parse { Seq (st, rest) } | statement;
+    statement: 
+      "read" "(" name:IDENT ")" { Read name } 
+      | "write" "(" expr:!(Expr.expr) ")" { Write expr } 
+      | name:IDENT ":=" expr:!(Expr.expr) { Assign (name, expr) }
+  )
       
   end
 
