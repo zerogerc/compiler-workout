@@ -1,0 +1,17 @@
+# temp up to RT
+*.a
+*.o
+# other
+*~
+*.cmi
+*.cmx
+*.cma
+*.cmo
+*.annot
+*.opt
+*.byte
+*.native
+src/.depend
+regression/*.log
+regression/deep-expressions/*.log
+regression/expressions/*.log
