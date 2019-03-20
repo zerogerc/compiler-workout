@@ -37,14 +37,40 @@ module Expr =
     *)
     let update x v s = fun y -> if x = y then v else s y
 
+    let bool_of_int intValue = intValue != 0
+
+    let int_of_bool boolValue = if boolValue then 1 else 0
+
+    let apply_operation op left right = match op with
+      | "+" -> (+) left right
+      | "-" -> (-) left right
+      | "*" -> ( * ) left right
+      | "/" -> (/) left right
+      | "%" -> (mod) left right
+      | "!!" -> int_of_bool ((||) (bool_of_int left) (bool_of_int right))
+      | "&&" -> int_of_bool ((&&) (bool_of_int left) (bool_of_int right))
+      | "==" -> int_of_bool ((==) left right)
+      | "!=" -> int_of_bool ((!=) left right)
+      | "<=" -> int_of_bool ((<=) left right)
+      | "<" -> int_of_bool ((<) left right)
+      | ">=" -> int_of_bool ((>=) left right)
+      | ">" -> int_of_bool ((>) left right)
+      | _ -> failwith "Unknown operation"
+
     (* Expression evaluator
 
           val eval : state -> t -> int
  
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
-    *)                                                       
-    let eval st expr = failwith "Not yet implemented"
+    *)                 
+    let rec eval state expr = match expr with
+      | Const value -> value
+      | Var name -> state name 
+      | Binop (op, left, right) -> apply_operation op (eval state left) (eval state right)
+    
+    
+    let createBinopParsePair op = ostap(- $(op)), fun left right -> Binop (op, left, right)
 
     (* Expression parser. You can use the following terminals:
 
@@ -52,8 +78,23 @@ module Expr =
          DECIMAL --- a decimal constant [0-9]+ as a string
                                                                                                                   
     *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+    ostap (
+      expr: 
+        !(Ostap.Util.expr
+          (fun parsed -> parsed)
+          (Array.map (fun (assoc, operations) -> assoc, List.map createBinopParsePair operations)
+            [|
+              `Lefta, ["!!"];
+              `Lefta, ["&&"];
+              `Nona,  ["<="; "<"; ">="; ">"; "=="; "!="];
+              `Lefta, ["+"; "-"];
+              `Lefta, ["*"; "/"; "%"];
+            |]
+          )
+          primary
+        );
+
+      primary: name:IDENT {Var name} | value:DECIMAL {Const value} | -"(" expr -")"
     )
     
   end
@@ -71,7 +112,7 @@ module Stmt =
     (* empty statement                  *) | Skip
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
-    (* loop with a post-condition       *) (* add yourself *)  with show
+    (* loop with a post-condition       *) | Repeat of t * Expr.t  with show
                                                                     
     (* The type of configuration: a state, an input stream, an output stream *)
     type config = Expr.state * int list * int list 
@@ -82,13 +123,52 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let rec eval conf stmt = failwith "Not yet implemented"
-                               
+    
+    let rec eval (state, inp, out) statement = 
+      let config = (state, inp, out) in
+      match statement with
+        | Read name -> 
+          let value = List.hd inp in
+          let rest = List.tl inp in
+          (Expr.update name value state, rest, out)
+        | Write expr -> (state, inp, out @ [(Expr.eval state expr)])
+        | Assign (name, expr) -> ((Expr.update name (Expr.eval state expr) state), inp, out)
+        | Seq (s1, s2) -> eval (eval config s1) s2
+        | Skip -> config
+        | If (cond, st1, st2) ->
+          if (Expr.eval state cond) != 0 
+            then (eval config st1)
+            else (eval config st2)
+        | While (cond, st) ->
+          if (Expr.eval state cond) != 0
+            then let updated = (eval config st) in eval updated statement
+            else config
+        | Repeat (st, cond) ->
+          let updated = (eval config st) in
+          let (u_state, u_inp, u_out) = updated in 
+          if (Expr.eval u_state cond) != 0
+            then updated
+            else eval updated statement
+        | _ -> failwith "Unknown operation"
+                             
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not yet implemented"}
-    )
-      
+      parse: st:statement ";" rest:parse { Seq (st, rest) } | statement;
+      statement: 
+        "read" "(" name:IDENT ")" { Read name } 
+        | "write" "(" expr:!(Expr.expr) ")" { Write expr } 
+        | name:IDENT ":=" expr:!(Expr.expr) { Assign (name, expr) }
+        | "skip" { Skip }
+        | "if" cond:!(Expr.expr) "then" st1:parse st2:eliffi { If (cond, st1, st2) }
+        | "while" cond:!(Expr.expr) "do" st:parse "od" { While (cond, st) }
+        | "repeat" st:parse "until" cond:!(Expr.expr) { Repeat (st, cond) }
+        | "for" init:parse "," cond:!(Expr.expr) "," upd:parse "do" st:parse "od" { Seq (init, While (cond, Seq (st, upd))) };
+
+      eliffi:
+        "fi" { Skip }
+        | "else" st:parse "fi" { st }
+        | "elif" cond:!(Expr.expr) "then" st1:parse st2:eliffi { If (cond, st1, st2) }
+    ) 
   end
 
 (* The top-level definitions *)
