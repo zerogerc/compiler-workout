@@ -90,24 +90,153 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code =
-  let suffix = function
-  | "<"  -> "l"
-  | "<=" -> "le"
-  | "==" -> "e"
-  | "!=" -> "ne"
-  | ">=" -> "ge"
-  | ">"  -> "g"
-  | _    -> failwith "unknown operator"	
-  in
-  let rec compile' env scode = failwith "Not implemented" in
-  compile' env code
+let set_zero operand = Binop ("^", operand, operand)
+
+let create_binop op x y = Binop (op, x, y)
+
+let rec compile_cmp env l r op res_operand =
+  let op_suffix ops = (
+    match ops with
+      | "<=" -> "le"
+      | "<" -> "l"
+      | ">=" -> "ge"
+      | ">" -> "g"
+      | "==" -> "e"
+      | "!=" -> "ne"
+      | _ -> failwith (Printf.sprintf "Unknown operator %s" ops)
+  ) in 
+  match (l, r) with
+    | (S _, S _) -> [
+      set_zero eax;
+      Mov (l, edx);
+      Binop ("cmp", r, edx);
+      Set(op_suffix op, "%al");
+      Mov(eax, res_operand)
+    ]
+    | _ -> [
+      set_zero eax;
+      Binop ("cmp", r, l);
+      Set (op_suffix op, "%al");
+      Mov (eax, res_operand)
+    ]
+
+let rec compile_binop env l r op res_operand =
+  let set_zero operand = Binop("^", operand, operand) in
+  let compile_simple_arithm op = (
+    match (l, r) with
+      | (S _, S _) -> [
+          Mov (l, eax);
+          Binop (op, r, eax);
+          Mov (eax, res_operand)
+      ]
+      | _ -> if res_operand = l
+        then [
+          Binop (op, r, l)
+        ]
+        else [
+          Binop (op, r, l);
+          Mov (l, res_operand)
+        ]
+  ) in
+  let compile_div_mod op = (
+    let result = if op = "/" then eax else edx in
+      [
+        Mov (l, eax);
+        set_zero edx;
+        Cltd;
+        IDiv r;
+        Mov (result, res_operand)
+      ]
+  ) in
+  let compile_or op = [
+    set_zero eax;
+    Mov (l, edx);
+    Binop ("!!", r, edx);
+    Set ("nz", "%al");
+    Mov (eax, res_operand)
+  ] in
+  let compile_and op = [
+    set_zero eax;
+    set_zero edx;
+    Binop ("cmp", L 0, l);
+    Set ("ne", "%al");
+    Binop ("cmp", L 0, r);
+    Set ("ne", "%dl");
+    Binop ("&&", edx, eax);
+    Mov (eax, res_operand)
+  ] in
+  let asm = match op with
+    | "+" | "-" | "*" -> compile_simple_arithm op
+    | "/" | "%" -> compile_div_mod op
+    | "<=" | "<" | ">=" | ">" | "==" | "!=" -> compile_cmp env l r op res_operand
+    | "!!" -> compile_or op
+    | "&&" -> compile_and op
+    | _ -> failwith ("Unknown operand") in
+  env, asm
+
+let rec range l h = if l >= h then [] else l :: (range (l + 1) h)
+
+let rec compile_single env instr =
+  let push_all_regs_on_stack = List.map (fun x -> Push (R x)) (range 0 num_of_regs) in
+  let pop_all_regs_from_stack = List.map (fun x -> Pop (R x)) (List.rev (range 0 num_of_regs)) in
+  let get_operands env num = (
+    let accumulate = (fun (env, operands) _ -> let operand, env = env#pop in (env, operand::operands)) in
+    List.fold_left accumulate (env, []) (range 0 num)) in
+  let env, asm = match instr with
+    | CONST x ->
+      let operand, env = env#allocate in
+      env, [Mov (L x, operand)]
+    | BINOP op -> 
+      let r, l, env = env#pop2 in
+      let res_operand, env = env#allocate in
+      (compile_binop env l r op res_operand)
+    | LD name -> 
+      let operand, env = (env#global name)#allocate in
+      let var = env#loc name in
+      env, [Mov (var, eax); Mov (eax, operand)]
+    | ST name -> 
+      let operand, env = (env#global name)#pop in
+      let var = env#loc name in
+      env, [Mov (operand, eax); Mov (eax, var)]
+    | LABEL l -> env, [Label l]
+    | JMP l -> env, [Jmp l]
+    | CJMP (z, l) ->
+      let operand, env = env#pop in
+      env, [Binop ("cmp", L 0, operand); CJmp (z, l)]
+    | BEGIN (name, args, locals) ->
+      let env = env#enter name args locals in
+      env, [Push ebp; Mov (esp, ebp)] @ push_all_regs_on_stack @ [Binop ("-", M ("$" ^ env#lsize), esp)]
+    | END ->
+      let return = [Mov (ebp, esp); Pop ebp; Ret; Meta (Printf.sprintf "\t.set %s, %d" env#lsize (env#allocated * word_size))] in
+      env, [Label env#epilogue] @ pop_all_regs_from_stack @ return
+    | CALL (name, num_args, is_function) ->
+      let fname = match name with | "read" -> "Lread" | "write" -> "Lwrite" | _ -> name in
+      let env', arg_operands = get_operands env num_args in
+      let push_args = List.map (fun arg -> Push arg) arg_operands in
+      let env'', res_asm = 
+        if is_function 
+          then let operand, env'' = env'#allocate in env'', [Mov (eax, operand)]
+          else env', [] in
+      env'', push_args @ [Call fname; Binop ("+", L (word_size * num_args), esp)] @ res_asm
+    | RET has_ret ->
+      if has_ret
+        then let operand, env = env#pop in env, [Mov (operand, eax); Jmp env#epilogue]
+        else env, [Jmp env#epilogue]
+    | _ -> failwith "Unknown instruction"
+  in env, asm
+
+let rec compile env prg = match prg with
+  | [] -> env, []
+  | instr :: rest ->
+    let env, single_asm = compile_single env instr in
+    let env, rest_asm = compile env rest in
+      env, single_asm @ rest_asm
 
 (* A set of strings *)           
 module S = Set.Make (String)
 
 (* Environment implementation *)
-let make_assoc l = List.combine l (List.init (List.length l) (fun x -> x))
+let make_assoc l = List.combine l (range 0 (List.length l))
                      
 class env =
   object (self)
