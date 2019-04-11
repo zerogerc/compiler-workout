@@ -1,0 +1,11 @@
+fun inc () {
+    cnt := cnt + 1;
+    return 0
+}
+
+fun write_cnt (unused) {
+    write(cnt)
+}
+
+cnt := 0;
+write_cnt (inc ())
