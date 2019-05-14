@@ -325,7 +325,7 @@ module M = Map.Make (String)
 (* Environment implementation *)
 class env =
   let chars          = "_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNJPQRSTUVWXYZ" in
-  let make_assoc l i = List.combine l (List.init (List.length l) (fun x -> x + i)) in
+  let make_assoc l i = List.combine l (List.map (fun x -> x + i) (range 0 (List.length l))) in
   let rec assoc  x   = function [] -> raise Not_found | l :: ls -> try List.assoc x l with Not_found -> assoc x ls in
   object (self)
     val globals     = S.empty (* a set of global variables         *)
