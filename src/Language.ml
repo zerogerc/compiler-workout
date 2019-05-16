@@ -120,7 +120,7 @@ module Builtin =
   struct
       
     let eval (st, i, o, _) args = function
-    | "raw"      -> (st, i, o, Some (Value.of_int 1))
+    (* | "raw"      -> (st, i, o, Some (Value.of_int 1)) *)
     | "read"     -> (match i with z::i' -> (st, i', o, Some (Value.of_int z)) | _ -> failwith "Unexpected end of input")
     | "write"    -> (st, i, o @ [Value.to_int @@ List.hd args], None)
     | ".elem"    -> let [j; b] = args in
@@ -360,18 +360,18 @@ module Stmt =
 
     let rec pattern_match value brs = 
       let is_some = function | Some _ -> true | None -> false in
-      let rec bind_pattern_variables value pattern = match pattern with
+      let rec try_bind_pattern_variables value pattern = match pattern with
         | Pattern.Wildcard -> Some []
+        | Pattern.Ident var -> Some [(var, value)]
         | Pattern.Sexp (name, subpatterns) ->
           let Value.Sexp (name', subvalues) = value in
             if (name = name') && (List.length subpatterns = List.length subvalues) then
-              let subresults = List.map2 bind_pattern_variables subvalues subpatterns in
+              let subresults = List.map2 try_bind_pattern_variables subvalues subpatterns in
               match (List.for_all (is_some) subresults) with 
                 | true -> Some (List.concat (List.map (fun (Some lst) -> lst) subresults)) 
                 | false -> None
-            else None 
-        | Pattern.Ident var -> Some [(var, value)] in
-      let match_pattern (pattern, stmt) = match (bind_pattern_variables value pattern) with 
+            else None in
+      let match_pattern (pattern, stmt) = match (try_bind_pattern_variables value pattern) with 
         | Some lst -> Some (lst, stmt) 
         | None -> None in
       let Some (branch_locals, stmt) = List.find (is_some) (List.map match_pattern brs) in

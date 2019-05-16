@@ -1,0 +1,5 @@
+x := `a (`b (1, 2), 3);
+
+case x of
+  `a (`b (x, y), z) -> write(1); write(2); write(3)
+esac

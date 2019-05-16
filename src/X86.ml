@@ -120,12 +120,12 @@ module Utils =
     let asm_binop_correction l r res asm = [Sar1 l; Sar1 r] @ asm @ [Sal1 res; Or1 res]
 
     let asm_mov_to_reg_if_needed l r = match (l, r) with
-      | (S _, S _) -> eax, r, [Mov (l, eax)]
+      | (M _, M _) | (S _, S _) | (M _, S _) | (S _, M _) -> eax, r, [Mov (l, eax)]
       | _ -> l, r, []
 
     let asm_mov src dst =
-      match dst with
-        | M _ -> [Mov (src, eax); Mov (eax, dst)]
+      match (src, dst) with
+        | (M _, M _) | (S _, S _) | (M _, S _) | (S _, M _) -> [Mov (src, eax); Mov (eax, dst)]
         | _ -> [Mov (src, dst)]
 
   end
@@ -146,10 +146,11 @@ let rec range l h = if l >= h then [] else l :: (range (l + 1) h)
 let compile_plus_minus_multiply op l r res =
   let il, ir = l, r in
   let l, r, asm_mov = Utils.asm_mov_to_reg_if_needed l r in
-  Utils.asm_binop_correction il ir res (asm_mov @ [
-    Binop (op, r, l);
-    Mov (l, res);
-  ])
+  let asm = asm_mov @ [Binop (op, r, l); Mov (l, res)] in
+  match op with 
+    | "+" -> asm @ [Dec res]
+    | "-" -> asm @ [Or1 res]
+    | "*" -> Utils.asm_binop_correction il ir res asm
 
 let compile_div_mod op l r res =
   let pre_res = if op = "/" then eax else edx in
@@ -181,15 +182,16 @@ let compile_or op l r res =
   ]
 
 let compile_and op l r res =
-  Utils.asm_binop_correction l r res [
-    Utils.set_zero eax;
-    Utils.set_zero edx;
+  [
+    Dec l; Dec r;
+    Utils.set_zero eax; Utils.set_zero edx;
     Binop ("cmp", L 0, l);
     Set ("ne", "%al");
     Binop ("cmp", L 0, r);
     Set ("ne", "%dl");
     Binop ("&&", edx, eax);
     Mov (eax, res);
+    Sal1 res; Or1 res;
   ]
 
 let compile_binop op l r res =
@@ -203,14 +205,18 @@ let compile_binop op l r res =
 
 let compile_call env name num_args is_procedure =
   let get_operands env num = (
-    let accumulate = (fun (env, operands) _ -> let operand, env = env#pop in (env, operand::operands)) in
-    List.fold_left accumulate (env, []) (range 0 num)) in
-  let name = match name.[0] with '.' -> "B" ^ String.sub name 1 (String.length name - 1) | _ -> name in
-  let push_regs = List.map (fun reg -> (Push reg)) (env#live_registers num_args) in
-  let pop_regs = List.map (fun reg -> (Pop reg)) (env#live_registers num_args) in
+    let add_operand = (fun (env, operands) _ -> let operand, env = env#pop in (env, operand::operands)) in
+    List.fold_left add_operand (env, []) (range 0 num)) in
+  let name = match name.[0] with 
+    | '.' -> "B" ^ String.sub name 1 (String.length name - 1) 
+    | _ -> name in
+  let push_regs, pop_regs = List.split @@ List.map (fun reg -> (Push reg, Pop reg)) (env#live_registers num_args) in
   let env, arg_operands = get_operands env num_args in
-  let push_args = List.map (fun arg -> Push arg) arg_operands in
-  let push_args = match name with | "Barray" -> push_args @ [(Push (L num_args))] | _ -> push_args in
+  let push_args = 
+    let asm = List.map (fun x -> Push x) arg_operands in
+    match name with 
+      | "Barray" -> asm @ [(Push (L num_args))] 
+      | _ -> asm in
   let env, res_asm = 
     if not is_procedure 
       then let operand, env = env#allocate in env, [Mov (eax, operand)]
@@ -244,11 +250,11 @@ let rec compile_single env instr =
     | LD name -> 
       let operand, env = (env#global name)#allocate in
       let var = env#loc name in
-      env, [Mov (var, eax); Mov (eax, operand)]
+      env, Utils.asm_mov var operand
     | ST name -> 
       let operand, env = (env#global name)#pop in
       let var = env#loc name in
-      env, [Mov (operand, eax); Mov (eax, var)]
+      env, Utils.asm_mov operand var
     | STA (name, size) ->
       let op_data, env = (env#global name)#allocate in
       let asm_data_mov = Utils.asm_mov (env#loc name) op_data in
@@ -293,8 +299,8 @@ let rec compile_single env instr =
       let dup_op, env = env#allocate in
       env, Utils.asm_mov top dup_op
     | SWAP ->
-      let top1, top2 = env#peek2 in
-      env, [Push top1; Mov (top2, eax); Mov (eax, top1); Pop top2]
+      let x, y = env#peek2 in
+      env, [Push x; Mov (y, eax); Mov (eax, x); Pop y]
     | TAG t ->
       let op_tag, env = env#allocate in
       let env, asm_call = compile_call env ".tag" 2 false in
@@ -302,8 +308,9 @@ let rec compile_single env instr =
     | ENTER locals ->
       let env = env#scope locals in
       let asm_mov_var (env, acc) var =
-        let op, env = env#pop in env, (acc @ [Mov (op, env#loc var)]) in
-      List.fold_left asm_mov_var (env, []) locals
+        let op, env = env#pop in env, (Mov (op, env#loc var) :: acc) in
+      let env, asm = List.fold_left asm_mov_var (env, []) locals in
+      env, List.rev asm
     | LEAVE -> env#unscope, []
     | _ -> failwith "Unknown SM instruction"
   in 

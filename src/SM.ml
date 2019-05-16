@@ -193,22 +193,6 @@ and compile_expr = function
   | Expr.StringVal v -> compile_expr v @ [CALL (".stringval", 1, false)]
   | Expr.Call (name, args) -> compile_call name args false
 
-and make_bindings pattern =
-  let rec inner p = match p with
-    | Stmt.Pattern.Wildcard -> []
-    | Stmt.Pattern.Ident var -> [[]]
-    | Stmt.Pattern.Sexp (_, exprs) -> 
-      let next i x = List.map (fun arr -> i::arr) (inner x) in List.flatten (List.mapi next exprs)
-  in
-  let elem i = [CONST i; CALL (".elem", 2, false)] in
-  let extract_bind_value path = [DUP] @ (List.flatten (List.map elem path)) @ [SWAP] in
-  List.flatten (List.map extract_bind_value (List.rev (inner pattern)))
-
-and compile_simple_branch pattern stmt next_label end_label =
-  let pattern_prg, p_used = compile_pattern pattern next_label 0 in
-  let stmt_prg, s_used = compile_block (Stmt.Seq (stmt, Stmt.Leave)) end_label in
-  pattern_prg @ make_bindings pattern @ [DROP; ENTER (List.rev (Stmt.Pattern.vars pattern))] @ stmt_prg, p_used, s_used
-
 and compile_pattern pattern end_label depth = 
   match pattern with
     | Stmt.Pattern.Wildcard -> [DROP], false
@@ -226,6 +210,26 @@ and compile_pattern pattern end_label depth =
       let prg = List.flatten (List.mapi compile_subpattern exprs) in
       [TAG name] @ [DROPJMP (end_label, depth)] @ prg, true 
 
+and compile_bindings pattern =
+  (* returns list of paths (int list) to the idents *)
+  let root_path = [] in
+  let rec get_paths = function
+    | Stmt.Pattern.Wildcard -> []
+    | Stmt.Pattern.Ident _ -> [root_path] 
+    | Stmt.Pattern.Sexp (_, patterns) -> 
+      let append_cur cur pattern = List.map (fun path -> cur::path) (get_paths pattern) in 
+      List.flatten @@ List.mapi append_cur patterns 
+  in
+      let elem i = [CONST i; CALL (".elem", 2, false)] in
+      let extract_bind_value path = [DUP] @ (List.flatten (List.map elem path)) @ [SWAP] in
+      List.flatten (List.map extract_bind_value (List.rev (get_paths pattern)))
+
+and compile_branch pattern stmt next_label end_label =
+  let pattern_prg, p_used = compile_pattern pattern next_label 0 in
+  let stmt_prg, s_used = compile_block (Stmt.Seq (stmt, Stmt.Leave)) end_label in
+  let bindings = compile_bindings pattern in
+  pattern_prg @ bindings @ [DROP; ENTER (List.rev (Stmt.Pattern.vars pattern))] @ stmt_prg, p_used, s_used
+    
 and compile_block stmt end_label =
   match stmt with
     | Stmt.Assign (name, idxs, e) -> (
@@ -256,19 +260,19 @@ and compile_block stmt end_label =
       [LABEL l_repeat] @ repeat_prg @ compile_expr e @ [CJMP ("z", l_repeat)], false
     | Stmt.Case (e, brs) -> (match brs with
       | [pattern, stmt] ->
-        let br_prg, p_used, s_used = compile_simple_branch pattern stmt end_label end_label in 
+        let br_prg, p_used, s_used = compile_branch pattern stmt end_label end_label in 
         compile_expr e @ [DUP] @ br_prg, p_used || s_used 
       | brs ->
         let n = List.length brs - 1 in
         let compile_branch_fold (prev_label, i, prg) (pattern, p_stmt) =
           let has_next = (i != n) in
           let next_label = if has_next then label_generator#generate else end_label in
-          let label_prg = match prev_label with Some x -> [LABEL x; DUP] | None -> [] in
-          let br_prg, _, _ = compile_simple_branch pattern p_stmt next_label end_label in
+          let label_prg = match prev_label with Some x -> [LABEL x; DUP] | None -> [DUP] in
+          let br_prg, _, _ = compile_branch pattern p_stmt next_label end_label in
           let cur_prg = label_prg @ br_prg @ (if has_next then [JMP end_label] else []) in
           Some next_label, i + 1, cur_prg :: prg in
         let _, _, prg = List.fold_left compile_branch_fold (None, 0, []) brs in
-        compile_expr e @ [DUP] @ List.flatten @@ List.rev prg, true
+        compile_expr e @ List.flatten @@ List.rev prg, true
     )
     | Stmt.Return e -> (match e with
       | Some v -> (compile_expr v) @ [RET true]
